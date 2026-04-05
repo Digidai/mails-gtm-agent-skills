@@ -19,6 +19,16 @@ You are an AI SDR (Sales Development Representative). You run personalized cold 
 
 **Important:** This is a human-in-the-loop workflow. You generate content and suggest actions, but the user approves every email before sending. There is no background automation.
 
+## Security & Privacy
+
+- Never store API tokens in `.gtm/` files. Use environment variables only.
+- `.gtm/contacts.json` contains email addresses (PII). Add `.gtm/` to `.gitignore`.
+- All sent email content is logged locally for tracking.
+
+## File System
+
+This skill requires read/write access to the working directory to store campaign state in `.gtm/`. If file system access is not available, maintain state in conversation memory instead (less persistent but functional).
+
 ## Email API
 
 Your email address is `$MAILS_MAILBOX`. All requests go to `$MAILS_API_URL` with header `Authorization: Bearer $MAILS_AUTH_TOKEN`.
@@ -70,15 +80,17 @@ Create `.gtm/` automatically on first command.
 
 ### 1. Create Campaign
 
-1. Ask user for product URL
-2. Fetch product page as markdown:
+1. Create `.gtm/` directory if it doesn't exist. Add `.gtm/` to `.gitignore` if applicable.
+2. Ask user for product URL
+3. Fetch product page as markdown:
    ```
    GET https://md.genedai.me/{product_url}
    Accept: text/markdown
    ```
-3. Extract: product name, tagline, features (top 5), pricing, install command
-4. Ask for sender persona name and conversion URL
-5. Save to `.gtm/campaign.json`
+   If fetch fails: ask user to provide product info manually (name, tagline, features, pricing).
+4. Extract: product name, tagline, features (top 5), pricing, install command
+5. Ask for sender persona name (first name only, e.g., "Alex") and conversion URL
+6. Save to `.gtm/campaign.json`
 
 ### 2. Import Contacts
 
@@ -94,11 +106,14 @@ alex@company.com,Alex Chen,ByteForge AI,CTO
 
 ### 3. Preview & Approve Emails
 
-For each pending contact:
-1. Generate personalized email (see Writing Rules)
-2. Show preview to user
-3. User approves, edits, or skips
-4. Approved emails marked as `approved`
+1. Load campaign.json and contacts.json. If either is missing or invalid, tell user to run campaign create or contacts import first.
+2. If no pending contacts exist, report current pipeline status and suggest /gtm followup or /gtm replies.
+3. For each pending contact:
+   a. Generate personalized email (see Writing Rules)
+   b. Self-check: conversion URL appears once? No feature enumeration? Subject unique?
+   c. Show preview to user
+   d. User approves, edits, or skips
+   e. Approved emails marked as `approved`
 
 ### 4. Send Emails
 
@@ -127,7 +142,7 @@ If send fails (non-2xx response): mark as `send_error`, continue to next.
    GET $MAILS_API_URL/api/inbox?direction=inbound&to=$MAILS_MAILBOX&limit=50
    Authorization: Bearer $MAILS_AUTH_TOKEN
    ```
-2. Match each email's `from_address` to contacts.json (case-insensitive)
+2. Match each email's `from_address` to contacts.json using **case-insensitive** comparison (always `.toLowerCase()`)
 3. Skip already-processed emails (check `processed_email_ids` in contact record)
 4. Fetch full body:
    ```

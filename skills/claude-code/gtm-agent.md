@@ -6,17 +6,32 @@ You use the `mails` CLI for email operations. You (Claude Code) are the LLM — 
 
 **Important:** This is a human-in-the-loop workflow. You generate content and suggest actions, but the user approves every email before sending. There is no background automation — the user runs each command manually.
 
+## Security & Privacy
+
+- **Never** store API tokens in `.gtm/` files. Credentials stay in mails config or environment variables.
+- `.gtm/contacts.json` contains email addresses (PII). Add `.gtm/` to `.gitignore` immediately.
+- All sent email content is logged in `.gtm/conversations/` for tracking. Inform the user on first run.
+
 ## Prerequisites
 
 The `mails` CLI must be installed and configured. Verify with:
 ```bash
 mails config
 ```
-This should show `worker_url`, `worker_token`, `mailbox`, and `default_from`. If not configured, guide the user through `mails config set ...`.
+This should show `worker_url`, `worker_token`, `mailbox`, and `default_from`.
+
+If any value is missing, guide the user step by step:
+```
+1. "Run: mails config set worker_url https://your-worker.workers.dev"
+2. "Run: mails config set worker_token YOUR_TOKEN"
+3. "Run: mails config set mailbox agent@yourdomain.com"
+4. "Run: mails config set default_from agent@yourdomain.com"
+```
+Do NOT proceed with any /gtm command until mails config is complete.
 
 ## Campaign State
 
-Campaign data is stored in `.gtm/` in the current directory. Create this directory automatically when the user runs any `/gtm` command for the first time.
+Campaign data is stored in `.gtm/` in the current directory. Create this directory automatically when the user runs any `/gtm` command for the first time. Also add `.gtm/` to `.gitignore` if a `.gitignore` file exists.
 
 ```
 .gtm/
@@ -37,6 +52,9 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
    ```bash
    curl -s "https://md.genedai.me/{url}" -H "Accept: text/markdown"
    ```
+   If fetch fails (non-200, empty response, or timeout), fall back to manual input:
+   - Tell user: "Could not fetch {url}. Please provide the product info manually."
+   - Ask for: product name, one-line tagline, 3-5 key features, pricing, install command
 4. Read the markdown and extract product knowledge: name, tagline, description, key features (pick top 5), pricing, install command
 5. Ask for sender persona first name (e.g., "Alex"). Default: extract from the mailbox email local part
 6. Ask for conversion URL — the specific signup/landing page link to include in emails. Can be same as product URL
@@ -65,8 +83,15 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
 ### /gtm preview
 
 Generate preview emails for pending contacts (do NOT send):
-1. Load `.gtm/campaign.json` and `.gtm/contacts.json`
-2. For each contact with status `pending` (max 5 per batch):
+1. Load `.gtm/campaign.json` and `.gtm/contacts.json`. If either file is missing or has invalid JSON, tell the user to run `/gtm campaign create` or `/gtm contacts import` first.
+2. Count pending contacts. If zero, report:
+   ```
+   No pending contacts to preview.
+   - Sent: {N}  Interested: {N}  Stopped: {N}
+   Try /gtm followup for follow-ups, or /gtm replies to check responses.
+   ```
+   And stop.
+3. For each contact with status `pending` (max 5 per batch):
    a. Generate a personalized email following the Writing Rules below
    b. Before showing to user, self-check:
       - Conversion URL appears exactly once?
@@ -94,11 +119,14 @@ Send all approved emails:
       ```bash
       mails send --to "{email}" --subject "{subject}" --body "{body}"
       ```
-   b. Capture the CLI output (it shows a message ID or confirmation)
-   c. Update contact: status → `sent`, `emails_sent` += 1, `last_sent_at` → now
-   d. Save the subject, body, and angle to `decisions.json`
-   e. Save to `conversations/{email-hash}.json` as outbound message
-2. If send fails: update contact status to `send_error`, record error message, continue to next
+   b. Parse CLI output to confirm success. Expected format: `Sent via {provider} (id: {message_id})`
+      - Extract message_id if present (not critical if missing)
+   c. Update contact AND decisions in one write:
+      - contact: status → `sent`, `emails_sent` += 1, `last_sent_at` → now ISO string
+      - decisions.json: append the send record
+      - conversations/{email-hash}.json: append outbound message
+      - Write all files together. If any write fails, log the error but don't roll back the send (email already delivered).
+2. If `mails send` fails (non-zero exit code): update contact status to `send_error`, record error message, continue to next contact
 3. Report: "Sent {N} emails, {M} failed"
 
 ### /gtm replies
@@ -106,12 +134,13 @@ Send all approved emails:
 Check inbox for replies and process them:
 1. Fetch recent inbound emails:
    ```bash
-   mails inbox --direction inbound --limit 50
+   mails inbox --direction inbound --limit 50 --plain
    ```
-2. Parse the output. The CLI returns a table with columns: ID, Date, From, Subject
+   The `--plain` flag ensures tab-separated output (no ANSI colors). Format: `ID\tDate\tFrom\tSubject`
+2. Parse each line by splitting on tab. Extract the From field.
 3. For each inbound email:
-   a. Extract sender email address from the "From" column
-   b. Look up sender in `.gtm/contacts.json` (case-insensitive email match)
+   a. Extract sender email address from the "From" field (may include name: "Alex Chen <alex@co.com>" — extract the email between < >)
+   b. Look up sender in `.gtm/contacts.json` using **case-insensitive** email match (always compare `.toLowerCase()`)
    c. If no match: skip (not a campaign reply)
    d. Check if this email ID is already in the contact's `processed_email_ids`: skip if yes
    e. Fetch full email body:
@@ -245,11 +274,14 @@ Each email to a different contact MUST vary:
 ## Error Handling
 
 - **mails CLI not found:** Tell user to install with `npm install -g mails-agent`
-- **mails config missing:** Guide through `mails config set worker_url/worker_token/mailbox/default_from`
-- **Send fails:** Mark contact as `send_error`, record error, continue to next contact
-- **Inbox fetch fails:** Show error, suggest checking mails config
-- **CSV parse error:** Skip invalid rows, report count of skipped rows
-- **`.gtm/` read/write error:** Ensure directory exists, report if permissions issue
+- **mails config missing:** Guide through each config value one by one (see Prerequisites)
+- **Send fails:** Mark contact as `send_error`, record error message, continue to next contact
+- **Inbox fetch fails:** Show error, suggest `mails config` to verify settings
+- **CSV parse error:** Skip invalid rows, report count. Do NOT save partial data if email column is missing entirely
+- **`.gtm/` directory missing:** Create it automatically
+- **JSON file corrupted:** If `campaign.json` or `contacts.json` has invalid JSON, tell user: "File is corrupted. Run `/gtm campaign create` to rebuild, or restore from backup." Do NOT silently overwrite.
+- **Email case mismatch:** Always normalize emails to lowercase when storing and matching
+- **File write safety:** When updating contacts.json or decisions.json, read the current file first, modify in memory, then write the complete file back. This prevents partial writes.
 
 ## Data Format
 
