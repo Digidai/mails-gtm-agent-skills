@@ -42,12 +42,24 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
     └── {email-hash}.json  — per-contact conversation history
 ```
 
+## Natural Language Support
+
+If the user describes what they want without using slash commands (e.g., "help me run a cold email campaign" or "check for new replies"), map to the appropriate command:
+- "create/start/new campaign" → `/gtm campaign create`
+- "import/add contacts" → `/gtm contacts import`
+- "preview/generate emails" → `/gtm preview`
+- "send emails" → `/gtm send`
+- "check replies/inbox" → `/gtm replies`
+- "follow up" → `/gtm followup`
+- "show status/dashboard" → `/gtm status`
+
 ## Slash Commands
 
 ### /gtm campaign create
 
 1. Create `.gtm/` directory if it doesn't exist
 2. Ask for product URL (required). Example: `https://mails0.com`
+   - Validate: must start with `https://` or `http://`. Reject `javascript:`, `data:`, `file:`, localhost, internal IPs.
 3. Fetch the page as markdown:
    ```bash
    curl -s "https://md.genedai.me/{url}" -H "Accept: text/markdown"
@@ -56,8 +68,9 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
    - Tell user: "Could not fetch {url}. Please provide the product info manually."
    - Ask for: product name, one-line tagline, 3-5 key features, pricing, install command
 4. Read the markdown and extract product knowledge: name, tagline, description, key features (pick top 5), pricing, install command
-5. Ask for sender persona first name (e.g., "Alex"). Default: extract from the mailbox email local part
-6. Ask for conversion URL — the specific signup/landing page link to include in emails. Can be same as product URL
+5. Ask for sender persona first name (e.g., "Alex"). Default: extract from the mailbox email local part. **This is first name only, not full name or team name.**
+6. Ask for conversion URL — the specific signup/landing page link to include in emails.
+   - Validate: must start with `https://` or `http://`. Reject `javascript:`, `data:`, etc.
 7. Get the mailbox address:
    ```bash
    mails config get mailbox
@@ -67,6 +80,7 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
 
 ### /gtm contacts import {file}
 
+0. **Prerequisite check:** `.gtm/campaign.json` must exist. If not, tell user: "Run `/gtm campaign create` first."
 1. Read the CSV file. Expected format (header row required):
    ```
    email,name,company,role
@@ -75,10 +89,17 @@ Campaign data is stored in `.gtm/` in the current directory. Create this directo
    ```
    - `email` column is required. Others are optional.
    - Skip rows with invalid email format (no @).
-2. Deduplicate by email (case-insensitive)
-3. Initialize each contact with full status fields (see Data Format below)
-4. Save to `.gtm/contacts.json` (merge with existing if file exists)
-5. Report: "Imported {N} contacts, {M} duplicates skipped, {K} invalid emails skipped"
+   - **Self-email check:** Skip any contact whose email matches `campaign.sender_email` (cannot email yourself).
+   - **Sanitize names:** Strip HTML tags and control characters from name/company/role fields.
+   - **For >5000 contacts:** Warn user: "Large contact list. Consider splitting into multiple campaigns for better deliverability."
+2. Normalize all emails to lowercase. Deduplicate.
+3. **Merge logic:** If contacts.json already exists and contains a contact with the same email:
+   - Keep existing status, emails_sent, angles_used, and all tracking data
+   - Only update name/company/role if the existing value is null/empty
+   - Do NOT overwrite existing data with new CSV data
+4. Initialize new contacts with full status fields (see Data Format below)
+5. Save to `.gtm/contacts.json`
+6. Report: "Imported {N} new contacts, {M} duplicates (existing data kept), {K} invalid/self emails skipped"
 
 ### /gtm preview
 
@@ -105,7 +126,7 @@ Generate preview emails for pending contacts (do NOT send):
       ---
       {body}
       ```
-   d. Ask: **Send / Edit / Skip / Stop?**
+   d. Ask: **Send / Edit / Skip / Stop?** (Each email requires individual approval. Do NOT batch-approve "send all".)
    e. If Send: mark status `approved`, save the subject + body to contacts.json
    f. If Edit: let user modify, then re-ask
    g. If Skip: leave as `pending`
@@ -246,11 +267,11 @@ Each email to a different contact MUST vary:
 | not_now | "Busy", "follow up later", "not right now" | `not_now` | Extract follow-up date, set `follow_up_after` |
 | not_interested | Politely or firmly declines | `not_interested` | No further emails |
 | wrong_person | "Try contacting...", "I'm not the right person" | `wrong_person` | Ask user if referral should be added as new contact |
-| out_of_office | Auto-reply about being away, vacation | Keep current status | Note return date if mentioned |
+| out_of_office | Auto-reply about being away, vacation | No change (still `sent`) | Note return date. Do NOT auto-reply to OOO |
 | unsubscribe | "Stop emailing", "remove me", "unsubscribe" | `unsubscribed` | No further emails, ever |
-| auto_reply | Automated acknowledgment (not OOO) | Keep current status | Ignore, wait for real reply |
+| auto_reply | Automated acknowledgment (not OOO) | No change (still `sent`) | Ignore completely. Do NOT reply |
 | do_not_contact | Hostile, threatens legal action, demands removal | `do_not_contact` | No further emails, ever |
-| unclear | Can't determine intent with confidence | Keep current status | Ask user to classify manually |
+| unclear | Can't determine intent with confidence | No change | Ask user: "I'm unsure. What status should this be?" |
 
 ## Reply Generation Rules
 
@@ -269,7 +290,17 @@ Each email to a different contact MUST vary:
 - Reference the previous email naturally ("Following up on my earlier note about...")
 - Shorter than the first email (1-2 sentences ideal)
 - Be more specific to their company on each follow-up
-- After 3 total emails with no reply: mark as `stopped`, no more follow-ups
+- `emails_sent` counts ALL outbound emails (initial + follow-ups combined). After 3 total with no reply: mark as `stopped`
+- For `not_now` contacts: ask user "When should we follow up?" If the reply mentions a date (e.g., "in 3 weeks"), calculate it. Default: 30 days. Store in `follow_up_after`
+
+## Concurrency
+
+Do NOT run multiple `/gtm` commands in parallel from different sessions. One session per campaign at a time. Concurrent file writes will cause data loss.
+
+## Status Management
+
+- Statuses are **forward-only** in normal flow. To resend to a contact, user must manually edit `.gtm/contacts.json` and set status back to `pending` or `approved`.
+- If user asks to "resend" or "reset" a contact, explain: "Edit contacts.json, find the contact, change status to 'pending'. Then run /gtm preview."
 
 ## Error Handling
 

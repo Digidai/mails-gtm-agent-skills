@@ -101,7 +101,11 @@ alex@company.com,Alex Chen,ByteForge AI,CTO
 ```
 
 - `email` is required, others optional
-- Deduplicate by email
+- Validate URLs: product_url and conversion_url must be https:// or http://. Reject javascript:, data:, file:
+- Skip contacts whose email matches campaign sender_email (cannot email yourself)
+- Sanitize name/company/role: strip HTML tags
+- Normalize emails to lowercase. Deduplicate
+- Merge: if contact already exists, keep existing tracking data, only fill missing name/company/role
 - Save to `.gtm/contacts.json`
 
 ### 3. Preview & Approve Emails
@@ -157,9 +161,13 @@ If send fails (non-2xx response): mark as `send_error`, continue to next.
 Find contacts: status `sent`, `last_sent_at` > 3 days ago, `emails_sent` < 3.
 Generate follow-up with different angle. Preview and approve flow.
 
-After 3 emails with no reply: mark `stopped`.
+After 3 total emails (initial + follow-ups) with no reply: mark `stopped`.
 
-**Note:** Manually triggered. No background scheduler.
+`emails_sent` counts ALL outbound emails combined.
+
+For `not_now` contacts: ask user for follow-up date. Default: 30 days.
+
+**Note:** Manually triggered. No background scheduler. Do NOT run concurrent sessions on same `.gtm/` directory.
 
 ## Writing Rules
 
@@ -182,9 +190,9 @@ After 3 emails with no reply: mark `stopped`.
 | unsubscribe | `unsubscribed` | Stop permanently |
 | do_not_contact | `do_not_contact` | Stop permanently |
 | wrong_person | `wrong_person` | Ask user about referral |
-| out_of_office | Keep current | Note return date |
-| auto_reply | Keep current | Ignore |
-| unclear | Keep current | Ask user |
+| out_of_office | No change | Note return date. Do NOT reply |
+| auto_reply | No change | Ignore completely |
+| unclear | No change | Ask user to classify manually |
 
 ## Reply Rules
 
