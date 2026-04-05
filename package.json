@@ -1,0 +1,12 @@
+{
+  "name": "mails-gtm-agent-skills",
+  "version": "1.0.0",
+  "description": "AI SDR skills for Claude Code and Openclaw — cold email outreach powered by mails-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Digidai/mails-gtm-agent-skills"
+  },
+  "keywords": ["mails", "email", "sdr", "cold-email", "outreach", "ai-agent", "claude-code", "openclaw", "skill"],
+  "author": "Digidai",
+  "license": "MIT"
+}
