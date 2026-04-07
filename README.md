@@ -14,7 +14,7 @@ Install the skill, give it a product URL and a CSV of contacts, and your AI assi
 4. Monitors inbox for replies
 5. Classifies reply intent (interested, not now, unsubscribe...)
 6. Generates contextual follow-up replies
-7. Tracks the full pipeline: sent → clicked → replied → converted
+7. Tracks pipeline status: pending → sent → replied → interested/stopped
 
 ## vs mails-gtm-agent (the Worker)
 
@@ -23,7 +23,7 @@ Install the skill, give it a product URL and a CSV of contacts, and your AI assi
 | Runtime | Cloudflare Workers | Claude Code / Openclaw |
 | LLM | OpenRouter (paid) | Claude Code itself (included) |
 | Database | D1 (SQLite) | Local JSON files |
-| Automation | Fully autonomous (cron) | Human-in-the-loop |
+| Automation | Fully autonomous (cron) | Semi-auto (first touch manual, follow-ups auto) |
 | Setup | Deploy Worker + secrets | Install skill |
 | Best for | Hands-off operation | Oversight + control |
 
@@ -37,15 +37,23 @@ Install the skill, give it a product URL and a CSV of contacts, and your AI assi
 ### Claude Code
 
 ```bash
+# Core skill (required)
 claude skill install /path/to/mails-gtm-agent-skills/skills/claude-code/gtm-agent.md
+
+# Autonomy extension (optional — adds /gtm auto)
+claude skill install /path/to/mails-gtm-agent-skills/skills/claude-code/gtm-auto.md
 ```
 
-Or copy `skills/claude-code/gtm-agent.md` to `~/.claude/skills/`.
+Or copy both files to `~/.claude/skills/`.
 
 ### Openclaw
 
 ```bash
+# Core skill (required)
 openclaw skill install /path/to/mails-gtm-agent-skills/skills/openclaw/SKILL.md
+
+# Autonomy extension (optional)
+openclaw skill install /path/to/mails-gtm-agent-skills/skills/openclaw/gtm-auto.md
 ```
 
 ## Usage
@@ -71,6 +79,17 @@ Or use slash commands:
 /gtm replies
 /gtm status
 ```
+
+### Autonomous mode (requires autonomy extension)
+
+```
+/gtm auto              # Run full pipeline (semi-auto: first touch manual, follow-ups auto)
+/gtm mode autonomous   # Switch to full-auto (all emails sent without approval)
+/gtm mode manual       # Switch back to semi-auto
+/gtm digest            # Show latest run summary
+```
+
+Safety rails: daily send cap (20/day), contact cooldown (3 days), deliverability circuit breaker, configurable send window, idempotency keys.
 
 ## License
 
