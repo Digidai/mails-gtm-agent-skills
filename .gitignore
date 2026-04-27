@@ -1,0 +1,14 @@
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Local tool state
+.claude/
+.wrangler/
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/
